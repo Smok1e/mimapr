@@ -44,6 +44,8 @@ Matrix<T> CholeskyDecompose(const Matrix<T>& A)
 				L[i][j] = (A[i][j] - sum) / L[j][j];
 			}
 		}
+
+		std::print("decomposition: {:.0f}%  \r", 100 * static_cast<float>(i) / N);
 	}
 
 	return L;

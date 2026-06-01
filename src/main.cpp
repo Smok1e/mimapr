@@ -2,11 +2,14 @@
 #include <random>
 #include <numbers>
 #include <format>
+#include <ranges>
+#include <fstream>
 #include <span>
 
 #include <matrix.hpp>
 #include <cholesky.hpp>
 #include <node.hpp>
+#include <colormap.hpp>
 
 #include <SFML/Graphics.hpp>
 
@@ -14,54 +17,59 @@
 
 constexpr double eps = 1e-9;
 
+const auto& colors = colormap::ironbow;
+
+constexpr double dx = 0.1;
+constexpr double dy = 0.1;
+constexpr double dt = 0.1;
+
+constexpr double rx = dt / (dx*dx);
+constexpr double ry = dt / (dy*dy);
+
+constexpr double t_max = 25;
+constexpr double render_scale = 100;
+constexpr double T_min = 0;
+constexpr double T_max = 100;
+
+//        a
+//   +---------+
+//   |       	\
+// b |           \
+//   |     angle  \ 
+//   +-------------+
+
+constexpr double a = 4;
+constexpr double b = 4;
+constexpr double angle = std::numbers::pi / 4; // 45 degrees
+
+constexpr size_t gap = 70;
+constexpr size_t colormap_width = 30;
+
+sf::Font font;
+
 //========================================
 
 sf::Color Interpolate(sf::Color a, sf::Color b, float t);
 sf::Color Interpolate(std::span<const sf::Color> colors, float t);
+sf::Color Approximate(std::span<const sf::Color> colors, float t);
+
+void DrawGrid(
+	sf::RenderTarget& target,
+	sf::Vector2f position,
+	sf::Vector2f size,
+	const Matrix<Node>& grid
+);
+
+void DrawColormap(
+	sf::RenderTarget& target, 
+	sf::Vector2f position, 
+	sf::Vector2f size
+);
 
 //========================================
 
 int main()
 {
-	constexpr double dx = 0.1;
-	constexpr double dy = 0.1;
-	constexpr double dt = 0.05;
-
-	constexpr double rx = dt / (dx*dx);
-	constexpr double ry = dt / (dy*dy);
-
-	constexpr double t_max = 25;
-	constexpr double render_scale = 100;
-	constexpr double T_min = 0;
-	constexpr double T_max = 100;
-
-	const sf::Color colormap[] = {
-		sf::Color(0x00, 0x21, 0xB3),
-		sf::Color(0x16, 0x86, 0xF0),
-		sf::Color(0x28, 0xCF, 0xEC),
-		sf::Color(0x45, 0xCE, 0xA2),
-		sf::Color(0x00, 0x80, 0x00),
-		sf::Color(0x8D, 0xC7, 0x19),
-		sf::Color(0xFF, 0xFF, 0x00),
-		sf::Color(0xFF, 0xAE, 0x00),
-		sf::Color(0xFF, 0x75, 0x18),
-		sf::Color(0xFF, 0x30, 0x00),
-		sf::Color(0xC1, 0x00, 0x20),
-		sf::Color(0x5E, 0x10, 0x1D),
-		sf::Color(0x5E, 0x10, 0x1D)
-	};
-
-	//        a
-	//   +---------+
-	//   |       	\
-	// b |           \
-	//   |     angle  \ 
-	//   +-------------+
-
-	constexpr double a = 4;
-	constexpr double b = 4;
-	constexpr double angle = std::numbers::pi / 4; // 45 degrees
-
 	double bottom_width = a + b / std::tan(angle);
 
 	size_t grid_width = bottom_width / dx;
@@ -98,7 +106,7 @@ int main()
 				continue;
 
 			// Нижние и верхние граничные узлы
-			if (i == 0 || i == grid_height - 1)
+			else if (i == 0 || i == grid_height - 1)
 			{
 				node.type = Node::Type::Boundary;
 				node.boundary_condition = Node::BoundaryConditon::Dirichlet;
@@ -123,11 +131,14 @@ int main()
 		}
 	}
 
+	auto internal = std::views::filter([](const Node& node) -> bool {
+		return node.type == Node::Type::Internal;
+	});
+
 	// Нумерация внутренних узлов
 	size_t id = 0;
-	for (auto& node: grid)
-		if (node.type == Node::Type::Internal) 
-			node.id = id++;
+	for (auto& node: grid | internal)
+		node.id = id++;
 
 	// Количество неизвестных
 	size_t N = id;
@@ -167,7 +178,7 @@ int main()
 				break;
 
 			case Node::Type::External:
-				// throw std::runtime_error("external neighbor");
+				throw std::runtime_error("external neighbor");
 				break;
 
 		}
@@ -193,15 +204,19 @@ int main()
 	// Разложение холецкого
 	auto L = CholeskyDecompose(A);
 
-	sf::Vector2u window_size(
+	sf::Vector2f grid_display_size(
 		render_scale * bottom_width,
 		render_scale * b
+	);
+
+	sf::Vector2u window_size(
+		grid_display_size.x + 3 * gap + colormap_width,
+		grid_display_size.y + 2 * gap
 	);
 
 	sf::RenderWindow window(sf::VideoMode(window_size.x, window_size.y), "Visualization");
 	window.setVerticalSyncEnabled(true);
 
-	sf::Font font;
 	font.loadFromFile("resources/font.ttf");
 
 	sf::Text text;
@@ -212,14 +227,14 @@ int main()
 	sf::RectangleShape rect;
 
 	double time = 0;
+	bool written = false;
 	while (window.isOpen())
 	{
 		if (time < t_max)
 		{
 			// Обновление правой части системы
-			for (auto& node: grid)
-				if (node.id >= 0)
-					B[node.id][0] = B_boundary[node.id][0] + node.T;
+			for (auto& node: grid | internal)
+				B[node.id][0] = B_boundary[node.id][0] + node.T;
 
 			// Обновление температуры узлов в соответствии с решением
 			auto solution = CholeskySolve(L, B);
@@ -241,6 +256,28 @@ int main()
 			time += dt;
 		}
 
+		// Вывод решения в файл
+		else if (!written)
+		{
+			std::ofstream stream("result.txt");
+			for (size_t i = 0; i < grid.getHeight(); i++)
+			{
+				for (size_t j = 0; j < grid.getWidth(); j++)
+				{
+					if (grid[i][j].type == Node::Type::External)
+						std::print(stream, "        ");
+
+					else
+						std::print(stream, "{:8.4f} ", grid[i][j].T);
+				}
+
+				std::println(stream, "");
+			}
+
+			std::println("result is saved to result.txt");
+			written = true;
+		}
+
 		// Визуализация решения
 		sf::Event event;
 		while (window.pollEvent(event))
@@ -252,8 +289,23 @@ int main()
 					break;
 
 				case sf::Event::KeyPressed:
-					if (event.key.code == sf::Keyboard::Escape)
-						window.close();
+					switch (event.key.code)
+					{
+						case sf::Keyboard::Escape:
+							window.close();
+							break;
+
+						case sf::Keyboard::R:
+						{
+							time = 0;
+
+							for (auto& node: grid | internal)
+								node.T = 0;
+
+							break;
+						}
+
+					}
 
 					break;
 
@@ -262,28 +314,26 @@ int main()
 
 		window.clear();
 
-		rect.setSize(sf::Vector2f(dx * render_scale, dy * render_scale));
-		rect.setOutlineThickness(0);
+		DrawGrid(
+			window,
+			sf::Vector2f(gap, gap),
+			grid_display_size,
+			grid
+		);
 
-		for (auto& node: grid)
-		{
-			if (node.type == Node::Type::External)
-				continue;
-
-			float t = (node.T - T_min) / (T_max - T_min);
-
-			rect.setPosition(node.x * render_scale, node.y * render_scale);
-			rect.setFillColor(Interpolate(colormap, t));
-			window.draw(rect);
-		}
+		DrawColormap(
+		 	window,
+		 	sf::Vector2f(2 * gap + grid_display_size.x, gap),
+		 	sf::Vector2f(colormap_width, grid_display_size.y)
+		);
 
 		text.setString(std::format("t = {:.2f}", time));
-		text.setPosition(window.getSize().x - 150, 5);
+		text.setPosition(gap, gap + grid_display_size.y + 10);
 		window.draw(text);
 
 		auto mouse = sf::Mouse::getPosition(window);
-		int i = (mouse.y / (render_scale * dx));
-		int j = (mouse.x / (render_scale * dy));
+		int i = ((mouse.y - gap) / (render_scale * dy));
+		int j = ((mouse.x - gap) / (render_scale * dx));
 
 		if (
 			i >= 0 && i < grid.getHeight() &&
@@ -292,7 +342,7 @@ int main()
 		{
 			auto& node = grid[i][j];
 
-			rect.setPosition(sf::Vector2f(node.x * render_scale, node.y * render_scale));
+			rect.setPosition(sf::Vector2f(gap + node.x * render_scale, gap + node.y * render_scale));
 			rect.setSize(sf::Vector2f(dx * render_scale, dy * render_scale));
 			rect.setOutlineColor(sf::Color::White);
 			rect.setFillColor(sf::Color::Transparent);
@@ -300,12 +350,12 @@ int main()
 			window.draw(rect);
 
 			text.setString(std::format("T = {:.2f}", node.T));
-			text.setPosition(mouse.x, mouse.y);
+			text.setPosition(mouse.x + 20, mouse.y);
 			
 			auto bounds = text.getGlobalBounds();
 			rect.setSize(bounds.getSize() + sf::Vector2f(10, 10));
 			rect.setPosition(bounds.getPosition() - sf::Vector2f(5, 5));
-			rect.setFillColor(sf::Color::Black);
+			rect.setFillColor(sf::Color(0, 0, 0, 200));
 			rect.setOutlineThickness(0);
 
 			window.draw(rect);
@@ -335,12 +385,124 @@ sf::Color Interpolate(std::span<const sf::Color> colors, float t)
 
 	float t_global = t * (colors.size() - 1);
 	size_t pair = t_global;
+	if (pair >= colors.size() - 1)
+		pair = colors.size() - 2;
 
 	return Interpolate(
 		colors[pair], 
 		colors[pair + 1], 
 		t_global - pair
 	);	
+}
+
+sf::Color Approximate(std::span<const sf::Color> colors, float t)
+{
+	return colors[std::clamp<size_t>(t * colors.size(), 0, colors.size() - 1)];
+}
+
+//========================================
+
+void DrawGrid(
+	sf::RenderTarget& target,
+	sf::Vector2f position,
+	sf::Vector2f size,
+	const Matrix<Node>& grid
+)
+{
+	sf::Vector2f node_size(
+		dx * render_scale,
+		dy * render_scale
+	);
+
+	sf::RectangleShape rect;
+	rect.setSize(node_size);
+	rect.setOutlineThickness(0);
+
+	for (auto& node: grid)
+	{
+		rect.setPosition(
+			position + sf::Vector2f(
+				node.x * render_scale, 
+				node.y * render_scale
+			)
+		);
+
+		switch (node.type)
+		{
+			case Node::Type::Internal:
+				rect.setFillColor(Approximate(colors, (node.T - T_min) / (T_max - T_min)));
+				break;
+
+			case Node::Type::Boundary:
+				rect.setFillColor(sf::Color::White);
+				break;
+
+			case Node::Type::External:
+				rect.setFillColor(sf::Color(15, 16, 17));
+				break;
+
+		}
+
+		target.draw(rect);
+	}	
+
+	rect.setPosition(position);
+	rect.setSize(size - sf::Vector2f(2, 2));
+	rect.setOutlineThickness(2);
+	rect.setOutlineColor(sf::Color::White);
+	rect.setFillColor(sf::Color::Transparent);
+	target.draw(rect);
+}
+
+void DrawColormap(
+	sf::RenderTarget& target, 
+	sf::Vector2f position, 
+	sf::Vector2f size
+)
+{
+	constexpr size_t mark_count = 5;
+
+	sf::RectangleShape rect;
+	rect.setSize(sf::Vector2f(size.x, 1));
+
+	for (size_t y = 0; y < size.y; y++)
+	{
+		rect.setPosition(position.x, position.y + y);
+		rect.setFillColor(Approximate(colors, 1.f - static_cast<float>(y) / size.y));
+		target.draw(rect);
+	}
+
+	rect.setFillColor(sf::Color::Transparent);
+	rect.setOutlineColor(sf::Color::White);
+	rect.setOutlineThickness(2);
+	rect.setPosition(position + sf::Vector2f(2, 2));
+	rect.setSize(size - sf::Vector2f(2, 2));
+	target.draw(rect);
+
+	sf::Text text;
+	text.setFont(font);
+	text.setCharacterSize(20);
+	text.setFillColor(sf::Color::White);
+
+	rect.setFillColor(sf::Color::White);
+	rect.setSize(sf::Vector2f(10, 2));
+	rect.setOutlineThickness(0);
+
+	for (size_t i = 0; i < mark_count; i++)
+	{
+		float t = static_cast<float>(i) / (mark_count - 1);
+		float y = position.y + (1.f - t) * size.y;
+
+		rect.setPosition(position.x + size.x, y);
+		target.draw(rect);
+
+		text.setString(std::format("{:.0f}", T_min + t * (T_max - T_min)));
+
+		auto bounds = text.getGlobalBounds();
+		text.setOrigin(0, bounds.height);
+		text.setPosition(position.x + size.x + 15, y);
+		target.draw(text);
+	}
 }
 
 //========================================
