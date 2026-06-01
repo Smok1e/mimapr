@@ -21,14 +21,14 @@ const auto& colors = colormap::ironbow;
 
 constexpr double dx = 0.1;
 constexpr double dy = 0.1;
-constexpr double dt = 0.1;
+constexpr double dt = 0.05;
 
 constexpr double rx = dt / (dx*dx);
 constexpr double ry = dt / (dy*dy);
 
 constexpr double t_max = 25;
 constexpr double render_scale = 100;
-constexpr double T_min = 0;
+constexpr double T_min = 50;
 constexpr double T_max = 100;
 
 //        a
@@ -40,7 +40,7 @@ constexpr double T_max = 100;
 
 constexpr double a = 4;
 constexpr double b = 4;
-constexpr double angle = std::numbers::pi / 4; // 45 degrees
+constexpr double angle = 45.f * std::numbers::pi / 180.f;
 
 constexpr size_t gap = 70;
 constexpr size_t colormap_width = 30;
@@ -53,17 +53,28 @@ sf::Color Interpolate(sf::Color a, sf::Color b, float t);
 sf::Color Interpolate(std::span<const sf::Color> colors, float t);
 sf::Color Approximate(std::span<const sf::Color> colors, float t);
 
+sf::Vector2f NormalizeVector(const sf::Vector2f& vec);
+
 void DrawGrid(
 	sf::RenderTarget& target,
 	sf::Vector2f position,
 	sf::Vector2f size,
-	const Matrix<Node>& grid
+	const Matrix<Node>& grid,
+	bool vectors = false
 );
 
 void DrawColormap(
 	sf::RenderTarget& target, 
 	sf::Vector2f position, 
 	sf::Vector2f size
+);
+
+void DrawVector(
+	sf::RenderTarget& target, 
+	sf::Vector2f pos, 
+	sf::Vector2f vec,
+	sf::Color color     = sf::Color::White,
+	float     thickness = 2
 );
 
 //========================================
@@ -178,7 +189,6 @@ int main()
 				break;
 
 			case Node::Type::External:
-				throw std::runtime_error("external neighbor");
 				break;
 
 		}
@@ -228,6 +238,8 @@ int main()
 
 	double time = 0;
 	bool written = false;
+	bool vectors = false;
+
 	while (window.isOpen())
 	{
 		if (time < t_max)
@@ -298,12 +310,15 @@ int main()
 						case sf::Keyboard::R:
 						{
 							time = 0;
-
 							for (auto& node: grid | internal)
 								node.T = 0;
 
 							break;
 						}
+
+						case sf::Keyboard::V:
+							vectors ^= true;
+							break;
 
 					}
 
@@ -318,7 +333,8 @@ int main()
 			window,
 			sf::Vector2f(gap, gap),
 			grid_display_size,
-			grid
+			grid,
+			vectors
 		);
 
 		DrawColormap(
@@ -397,7 +413,17 @@ sf::Color Interpolate(std::span<const sf::Color> colors, float t)
 
 sf::Color Approximate(std::span<const sf::Color> colors, float t)
 {
-	return colors[std::clamp<size_t>(t * colors.size(), 0, colors.size() - 1)];
+	return colors[std::clamp<int>(t * colors.size(), 0, colors.size() - 1)];
+}
+
+sf::Vector2f NormalizeVector(const sf::Vector2f& vec)
+{
+	auto length = sqrt(vec.x*vec.x + vec.y*vec.y);
+
+	return sf::Vector2f(
+		vec.x / length,
+		vec.y / length
+	);
 }
 
 //========================================
@@ -406,7 +432,8 @@ void DrawGrid(
 	sf::RenderTarget& target,
 	sf::Vector2f position,
 	sf::Vector2f size,
-	const Matrix<Node>& grid
+	const Matrix<Node>& grid,
+	bool vectors /*= false*/
 )
 {
 	sf::Vector2f node_size(
@@ -415,36 +442,69 @@ void DrawGrid(
 	);
 
 	sf::RectangleShape rect;
-	rect.setSize(node_size);
-	rect.setOutlineThickness(0);
 
-	for (auto& node: grid)
+	if (vectors)
 	{
-		rect.setPosition(
-			position + sf::Vector2f(
-				node.x * render_scale, 
-				node.y * render_scale
-			)
-		);
-
-		switch (node.type)
+		for (size_t i = 2; i < grid.getHeight() - 1; i += 2)
 		{
-			case Node::Type::Internal:
-				rect.setFillColor(Approximate(colors, (node.T - T_min) / (T_max - T_min)));
-				break;
+			for (size_t j = 2; j < grid.getWidth() - 1; j += 2)
+			{
+				const auto& node = grid[i][j];
+				if (node.type != Node::Type::Internal)
+					continue;
 
-			case Node::Type::Boundary:
-				rect.setFillColor(sf::Color::White);
-				break;
+				auto dt_dx = (grid[i][j - 1].T - grid[i][j + 1].T) / (2 * dx);
+				auto dt_dy = (grid[i - 1][j].T - grid[i + 1][j].T) / (2 * dy);
 
-			case Node::Type::External:
-				rect.setFillColor(sf::Color(15, 16, 17));
-				break;
-
+				DrawVector(
+					target,
+					position + sf::Vector2f(
+						(node.x + dx / 2) * render_scale,
+						(node.y + dy / 2) * render_scale
+					),
+					0.5f * sf::Vector2f(
+						dt_dx,
+						dt_dy
+					),
+					Approximate(colors, (node.T - T_min) / (T_max - T_min))
+				);
+			}
 		}
+	}
 
-		target.draw(rect);
-	}	
+	else
+	{
+		rect.setSize(node_size);
+		rect.setOutlineThickness(0);
+
+		for (const auto& node: grid)
+		{
+			rect.setPosition(
+				position + sf::Vector2f(
+					node.x * render_scale, 
+					node.y * render_scale
+				)
+			);
+
+			switch (node.type)
+			{
+				case Node::Type::Internal:
+					rect.setFillColor(Approximate(colors, (node.T - T_min) / (T_max - T_min)));
+					break;
+
+				case Node::Type::Boundary:
+					rect.setFillColor(sf::Color::White);
+					break;
+
+				case Node::Type::External:
+					rect.setFillColor(sf::Color(15, 16, 17));
+					break;
+
+			}
+
+			target.draw(rect);
+		}
+	}
 
 	rect.setPosition(position);
 	rect.setSize(size - sf::Vector2f(2, 2));
@@ -503,6 +563,49 @@ void DrawColormap(
 		text.setPosition(position.x + size.x + 15, y);
 		target.draw(text);
 	}
+}
+
+void DrawVector(
+	sf::RenderTarget& target, 
+	sf::Vector2f pos, 
+	sf::Vector2f vec,
+	sf::Color color     /*= sf::Color::White*/,
+	float     thickness /*= 2*/
+)
+{
+	auto direction = NormalizeVector(vec);
+	sf::Vector2f perpendicular(
+		direction.y,
+		-direction.x
+	);
+
+	//							e
+	//							|\
+	//                          | \
+	// a------------------------c  \
+	// |						|   g
+	// b------------------------d  /
+	//                          | /
+	//                          |/
+	//                          f
+
+	auto line_short_side = .25f * thickness * perpendicular;
+	auto line_long_side = vec - direction * 4.f * thickness;
+	auto arrow_short_side = 1.f * perpendicular * thickness;
+	auto arrow_long_side = 4.f * thickness * direction;
+
+	sf::Vertex vertices[] = {
+		sf::Vertex(pos - line_short_side,                   color), // a
+		sf::Vertex(pos + line_short_side,                   color), // b
+		sf::Vertex(pos - line_short_side + line_long_side,  color), // a
+		sf::Vertex(pos + line_short_side + line_long_side,  color), // d
+		sf::Vertex(pos + line_long_side - arrow_short_side, color), // e
+		sf::Vertex(pos + line_long_side + arrow_short_side, color), // g
+		sf::Vertex(pos + line_long_side + arrow_long_side,  color)  // h
+	};
+
+	target.draw(vertices,     4, sf::TriangleStrip);
+	target.draw(vertices + 4, 3, sf::Triangles);
 }
 
 //========================================
