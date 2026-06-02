@@ -3,6 +3,7 @@
 #include <ostream>
 #include <print>
 #include <ranges>
+#include <cassert>
 
 //========================================
 
@@ -16,8 +17,11 @@ public:
 	explicit Matrix(const T (&data)[Height][Width]);
 
 	Matrix(const Matrix<T>& copy);
-	Matrix(Matrix<T>&& move) noexcept = default;
+	Matrix(Matrix<T>&& move) noexcept;
 	~Matrix();
+
+	Matrix<T>& operator=(const Matrix<T>& copy);
+	Matrix<T>& operator=(Matrix<T>&& copy);
 
 	size_t getWidth() const;
 	size_t getHeight() const;
@@ -60,6 +64,13 @@ public:
 
 	void resize(size_t new_height, size_t new_width);
 
+	Matrix<T> operator-(const Matrix<T>& rhs) const;
+	Matrix<T> operator+(const Matrix<T>& rhs) const;
+
+	Matrix<T> operator*(T scalar) const;
+
+	T dot(const Matrix<T>& vec) const;
+
 private:
 	size_t m_width;
 	size_t m_height;
@@ -100,9 +111,44 @@ Matrix<T>::Matrix(const Matrix<T>& copy):
 }
 
 template<typename T>
+Matrix<T>::Matrix(Matrix<T>&& move) noexcept:
+	m_width(move.m_width),
+	m_height(move.m_height)
+{
+	std::swap(move.m_data, m_data);
+}
+
+template<typename T>
 Matrix<T>::~Matrix()
 {
+	if (m_data)
+		delete[] m_data;
+}
+
+template<typename T>
+Matrix<T>& Matrix<T>::operator=(const Matrix<T>& copy)
+{
+	m_width = copy.m_width;
+	m_height = copy.m_height;
+
 	delete[] m_data;
+	m_data = new T[m_width * m_height];
+
+	std::copy(copy.begin(), copy.end(), m_data);
+	return *this;
+}
+
+template<typename T>
+Matrix<T>& Matrix<T>::operator=(Matrix<T>&& move)
+{
+	m_width = move.m_width;
+	m_height = move.m_height;
+
+	delete[] m_data;
+	m_data = move.m_data;
+	move.m_data = nullptr;
+
+	return *this;
 }
 
 //========================================
@@ -122,6 +168,7 @@ size_t Matrix<T>::getHeight() const
 template<typename T>
 T* Matrix<T>::get(size_t y)
 {
+	assert(y < m_height);
 	return m_data + y * m_width;
 }
 
@@ -134,6 +181,7 @@ const T* Matrix<T>::get(size_t y) const
 template<typename T>
 T& Matrix<T>::get(size_t y, size_t x)
 {
+	assert(x < m_width);
 	return get(y)[x];
 }
 
@@ -220,6 +268,61 @@ void Matrix<T>::resize(size_t new_height, size_t new_width)
 	std::swap(m_width, new_width);
 	std::swap(m_height, new_height);
 	delete[] new_data;
+}
+
+//========================================
+
+template<typename T>
+Matrix<T> Matrix<T>::operator-(const Matrix<T>& rhs)  const
+{
+	if (rhs.m_width != m_width || rhs.m_height != m_height)
+		throw std::invalid_argument("incompatiable operand");
+
+	Matrix<T> result(m_height, m_width);
+	for (size_t i = 0; i < m_height; i++)
+		for (size_t j = 0; j < m_width; j++)
+			result[i][j] = get(i, j) - rhs[i][j];
+
+	return result;
+}
+
+template<typename T>
+Matrix<T> Matrix<T>::operator+(const Matrix<T>& rhs)  const
+{
+	if (rhs.m_width != m_width || rhs.m_height != m_height)
+		throw std::invalid_argument("incompatiable operand");
+
+	Matrix<T> result(m_height, m_width);
+	for (size_t i = 0; i < m_height; i++)
+		for (size_t j = 0; j < m_width; j++)
+			result[i][j] = get(i, j) + rhs[i][j];
+
+	return result;
+}
+
+template<typename T>
+Matrix<T> Matrix<T>::operator*(T scalar)  const
+{
+	Matrix<T> result(m_height, m_width);
+	for (size_t i = 0; i < m_height; i++)
+		for (size_t j = 0; j < m_width; j++)
+			result[i][j] = get(i, j) * scalar;
+
+	return result;
+}
+
+template<typename T>
+T Matrix<T>::dot(const Matrix<T>& vec) const
+{
+	if (vec.m_width != m_width || vec.m_height != m_height)
+		throw std::invalid_argument("incompatiable operand");
+
+	T result {0};
+	for (size_t i = 0; i < m_height; i++)
+		for (size_t j = 0; j < m_width; j++)
+			result += get(i, j) * vec[i][j];
+
+	return result;
 }
 
 //========================================

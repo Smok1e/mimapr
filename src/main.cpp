@@ -7,7 +7,9 @@
 #include <span>
 
 #include <matrix.hpp>
+#include <conjugate_gradient.hpp>
 #include <cholesky.hpp>
+#include <gauss.hpp>
 #include <node.hpp>
 #include <colormap.hpp>
 
@@ -174,7 +176,6 @@ int main()
 						break;
 
 					case Node::BoundaryConditon::Neumann:
-						// Только для случая с левой границей
 						A[node.id][node.id] -= r;
 						B_boundary[node.id][0] -= r * neighbor.bc_value * dx; 
 						break;
@@ -210,8 +211,7 @@ int main()
 		}
 	}
 
-	// Разложение холецкого
-	auto L = CholeskyDecompose(A);
+	SparseMatrix A_sparse(A);
 
 	sf::Vector2f grid_display_size(
 		render_scale * bottom_width,
@@ -248,21 +248,10 @@ int main()
 				B[node.id][0] = B_boundary[node.id][0] + node.T;
 
 			// Обновление температуры узлов в соответствии с решением
-			auto solution = CholeskySolve(L, B);
+			auto solution = ConjugateGradientSolve(A_sparse, B);
 
-			double min_temperature = T_min;
-			double max_temperature = T_max;
-			for (auto& node: grid)
-			{
-				if (node.id != -1)
-					node.T = solution[node.id][0];
-
-				if (node.T < min_temperature)
-					min_temperature = node.T;
-
-				if (node.T > max_temperature)
-					max_temperature = node.T;
-			}
+			for (auto& node: grid | internal)
+				node.T = solution[node.id][0];
 
 			time += dt;
 		}
@@ -282,6 +271,9 @@ int main()
 
 			std::println("result is saved to result.txt");
 			written = true;
+
+			for (size_t i = 1; i < grid.getHeight() - 1; i++)
+				std::println("{:.2f}", (grid[i][1].T - grid[i][2].T) / dx);
 		}
 
 		// Визуализация решения
