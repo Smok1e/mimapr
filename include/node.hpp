@@ -23,6 +23,7 @@ struct Node
 	double x = 0;
 	double y = 0;
 	double T = 0;
+	double bc_value = 0;
 
 	int id = -1;
 };

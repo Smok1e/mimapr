@@ -18,7 +18,7 @@ Matrix<T> GaussSolve(const Matrix<T>& A, const Matrix<T>& b)
 	if (A.getHeight() != b.getHeight())
 		throw std::invalid_argument("coefficient matrix height is different from the column-vector");
 
-	// Прямой ход
+	// РџСЂСЏРјРѕР№ С…РѕРґ
 	auto n = A.getHeight();
 
 	Matrix<T> Ab = A;
@@ -38,7 +38,7 @@ Matrix<T> GaussSolve(const Matrix<T>& A, const Matrix<T>& b)
 		}
 	}
 
-	// Обратный ход
+	// РћР±СЂР°С‚РЅС‹Р№ С…РѕРґ
 	Matrix<T> solution(Ab.getHeight(), 1);
 	for (size_t y = 0; y < n; y++)
 		solution[y][0] = Ab[y][A.getWidth()];

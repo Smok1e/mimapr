@@ -21,7 +21,7 @@ const auto& colors = colormap::ironbow;
 
 constexpr double dx = 0.1;
 constexpr double dy = 0.1;
-constexpr double dt = 0.05;
+constexpr double dt = 0.01;
 
 constexpr double rx = dt / (dx*dx);
 constexpr double ry = dt / (dy*dy);
@@ -121,7 +121,7 @@ int main()
 			{
 				node.type = Node::Type::Boundary;
 				node.boundary_condition = Node::BoundaryConditon::Dirichlet;
-				node.T = 50;
+				node.bc_value = 50;
 			}
 
 			// Левые граничные узлы
@@ -129,7 +129,7 @@ int main()
 			{
 				node.type = Node::Type::Boundary;
 				node.boundary_condition = Node::BoundaryConditon::Neumann;
-				node.T = 40;
+				node.bc_value = -40;
 			}
 
 			// Правые наклонные граничные узлы
@@ -137,7 +137,7 @@ int main()
 			{
 				node.type = Node::Type::Boundary;
 				node.boundary_condition = Node::BoundaryConditon::Dirichlet;
-				node.T = 100;
+				node.bc_value = 100;
 			}
 		}
 	}
@@ -159,8 +159,7 @@ int main()
 	Matrix B_boundary(N, 1);
 
 	// Составление матрицы коэффициентов
-	auto add_neighbor = [&](const Node& node, const Node& neighbor, double r) 
-	{
+	auto add_neighbor = [&](const Node& node, const Node& neighbor, double r) {
 		switch (neighbor.type)
 		{
 			case Node::Type::Internal:
@@ -171,13 +170,13 @@ int main()
 				switch (neighbor.boundary_condition)
 				{
 					case Node::BoundaryConditon::Dirichlet:
-						B_boundary[node.id][0] += r * neighbor.T;
+						B_boundary[node.id][0] += r * neighbor.bc_value;
 						break;
 
 					case Node::BoundaryConditon::Neumann:
 						// Только для случая с левой границей
 						A[node.id][node.id] -= r;
-						B_boundary[node.id][0] += r * neighbor.T * dx; 
+						B_boundary[node.id][0] -= r * neighbor.bc_value * dx; 
 						break;
 
 					case Node::BoundaryConditon::None:
@@ -275,13 +274,8 @@ int main()
 			for (size_t i = 0; i < grid.getHeight(); i++)
 			{
 				for (size_t j = 0; j < grid.getWidth(); j++)
-				{
-					if (grid[i][j].type == Node::Type::External)
-						std::print(stream, "        ");
-
-					else
+					if (grid[i][j].type == Node::Type::Internal)
 						std::print(stream, "{:8.4f} ", grid[i][j].T);
-				}
 
 				std::println(stream, "");
 			}
