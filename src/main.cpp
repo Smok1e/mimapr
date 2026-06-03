@@ -177,7 +177,7 @@ int main()
 
 					case Node::BoundaryConditon::Neumann:
 						A[node.id][node.id] -= r;
-						B_boundary[node.id][0] -= r * neighbor.bc_value * dx; 
+						B_boundary[node.id][0] -= neighbor.bc_value * dx; 
 						break;
 
 					case Node::BoundaryConditon::None:
@@ -252,6 +252,16 @@ int main()
 
 			for (auto& node: grid | internal)
 				node.T = solution[node.id][0];
+
+			for (size_t i = 0; i < grid.getHeight(); i++)
+			{
+				for (size_t j = 0; j < grid.getWidth(); j++)
+				{
+					auto& node = grid[i][j];
+					if (node.boundary_condition == Node::BoundaryConditon::Neumann)
+						grid[i][j + 1].T = grid[i][j + 2].T - node.bc_value * dx;
+				}
+			}
 
 			time += dt;
 		}
