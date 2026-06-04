@@ -40,16 +40,3 @@ add_dependencies(
 	lab 
 	resources
 )
-
-#========================================
-
-add_executable(
-	test
-	"src/test.cpp"
-)
-
-target_include_directories(
-	test
-	PRIVATE
-	"include/"
-)

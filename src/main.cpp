@@ -21,9 +21,9 @@ constexpr double eps = 1e-9;
 
 const auto& colors = colormap::ironbow;
 
-constexpr double dx = 0.1;
-constexpr double dy = 0.1;
-constexpr double dt = 0.01;
+constexpr double dx = 0.2;
+constexpr double dy = 0.2;
+constexpr double dt = 0.05;
 
 constexpr double rx = dt / (dx*dx);
 constexpr double ry = dt / (dy*dy);
@@ -63,6 +63,11 @@ void DrawGrid(
 	sf::Vector2f size,
 	const Matrix<Node>& grid,
 	bool vectors = false
+);
+
+void DrawHoveredNode(
+	sf::RenderWindow& window,
+	const Matrix<Node>& grid
 );
 
 void DrawColormap(
@@ -118,27 +123,27 @@ int main()
 			if (node.type == Node::Type::External)
 				continue;
 
+			if (i == grid_height - 1 && j == grid_width / 2)
+			 	node.bc = Node::BoundaryCondition::Neuton;
+
 			// Нижние и верхние граничные узлы
 			else if (i == 0 || i == grid_height - 1)
 			{
-				node.type = Node::Type::Boundary;
-				node.boundary_condition = Node::BoundaryConditon::Dirichlet;
+				node.bc = Node::BoundaryCondition::Dirichlet;
 				node.bc_value = 50;
 			}
 
 			// Левые граничные узлы
 			else if (j == 0)
 			{
-				node.type = Node::Type::Boundary;
-				node.boundary_condition = Node::BoundaryConditon::Neumann;
+				node.bc = Node::BoundaryCondition::Neumann;
 				node.bc_value = -40;
 			}
 
 			// Правые наклонные граничные узлы
 			else if (grid[i][j + 1].type == Node::Type::External)
 			{
-				node.type = Node::Type::Boundary;
-				node.boundary_condition = Node::BoundaryConditon::Dirichlet;
+				node.bc = Node::BoundaryCondition::Dirichlet;
 				node.bc_value = 100;
 			}
 		}
@@ -155,63 +160,6 @@ int main()
 
 	// Количество неизвестных
 	size_t N = id;
-
-	Matrix A(N, N);
-	Matrix B(N, 1);
-	Matrix B_boundary(N, 1);
-
-	// Составление матрицы коэффициентов
-	auto add_neighbor = [&](const Node& node, const Node& neighbor, double r) {
-		switch (neighbor.type)
-		{
-			case Node::Type::Internal:
-				A[node.id][neighbor.id] -= r;
-				break;
-
-			case Node::Type::Boundary:
-				switch (neighbor.boundary_condition)
-				{
-					case Node::BoundaryConditon::Dirichlet:
-						B_boundary[node.id][0] += r * neighbor.bc_value;
-						break;
-
-					case Node::BoundaryConditon::Neumann:
-						A[node.id][node.id] -= r;
-						B_boundary[node.id][0] -= neighbor.bc_value * dx; 
-						break;
-
-					case Node::BoundaryConditon::None:
-						throw std::runtime_error("boundary condition not set");
-						break;
-
-				}
-
-				break;
-
-			case Node::Type::External:
-				break;
-
-		}
-	};
-
-	for (size_t i = 0; i < grid.getHeight(); i++)
-	{
-		for (size_t j = 0; j < grid.getWidth(); j++)
-		{
-			auto& node = grid[i][j];
-			if (node.id < 0)
-				continue;
-
-			A[node.id][node.id] = 1 + 2 * rx + 2 * ry;
-
-			add_neighbor(node, grid[i][j - 1], rx);
-			add_neighbor(node, grid[i][j + 1], rx);
-			add_neighbor(node, grid[i - 1][j], ry);
-			add_neighbor(node, grid[i + 1][j], ry);
-		}
-	}
-
-	SparseMatrix A_sparse(A);
 
 	sf::Vector2f grid_display_size(
 		render_scale * bottom_width,
@@ -233,35 +181,74 @@ int main()
 	text.setCharacterSize(20);
 	text.setFont(font);
 
-	sf::RectangleShape rect;
-
 	double time = 0;
 	bool written = false;
 	bool vectors = false;
 
+	Matrix A(N, N);
+	Matrix B(N, 1);
 	while (window.isOpen())
 	{
 		if (time < t_max)
 		{
-			// Обновление правой части системы
-			for (auto& node: grid | internal)
-				B[node.id][0] = B_boundary[node.id][0] + node.T;
+			// Составление матрицы коэффициентов и правой части
+			for (int i = 0; i < grid.getHeight(); i++)
+			{
+				for (int j = 0; j < grid.getWidth(); j++)
+				{
+					auto& node = grid[i][j];
+					if (node.id < 0)
+						continue;
+
+					switch (node.bc)
+					{
+						case Node::BoundaryCondition::None:
+							A[node.id][node.id] = 1 + 2 * rx + 2 * ry;
+							B[node.id][0] = node.T;
+
+							if (j > 0              ) A[node.id][grid[i][j - 1].id] = -rx;
+							if (j < grid_width - 1 ) A[node.id][grid[i][j + 1].id] = -rx;
+							if (i > 0              ) A[node.id][grid[i - 1][j].id] = -ry;
+							if (i < grid_height - 1) A[node.id][grid[i + 1][j].id] = -ry;
+
+							break;
+					
+						case Node::BoundaryCondition::Dirichlet:
+							// T_(i,j) = const
+							A[node.id][node.id] = 1;
+							B[node.id][0] = node.bc_value;
+
+							break;
+
+						case Node::BoundaryCondition::Neumann:
+							// dT/dn = q =>
+							// dT/dx = q =>
+							// T_(i,j+1) - T_(i,j) = q*dx
+							A[node.id][node.id] = -1;
+							A[node.id][grid[i][j + 1].id] = 1;
+							B[node.id][0] = node.bc_value * dx;
+
+							break;
+
+						case Node::BoundaryCondition::Neuton:
+							// dT/dn = T =>
+							// dT/dy = T =>
+							// (T_(i+1,j) - T_(i,j)) / dy = T =>
+							// T_(i+1,j) - T_(i,j) = T*dy
+							A[node.id][node.id] = -1;
+							A[node.id][grid[i - 1][j].id] = 1;
+							B[node.id][0] = node.T * dy;
+
+							break;
+					}
+				}
+			}
 
 			// Обновление температуры узлов в соответствии с решением
-			auto solution = ConjugateGradientSolve(A_sparse, B);
+			auto solution = GaussSolve(A, B);
 
 			for (auto& node: grid | internal)
 				node.T = solution[node.id][0];
-
-			for (size_t i = 0; i < grid.getHeight(); i++)
-			{
-				for (size_t j = 0; j < grid.getWidth(); j++)
-				{
-					auto& node = grid[i][j];
-					if (node.boundary_condition == Node::BoundaryConditon::Neumann)
-						grid[i][j + 1].T = grid[i][j + 2].T - node.bc_value * dx;
-				}
-			}
 
 			time += dt;
 		}
@@ -281,9 +268,6 @@ int main()
 
 			std::println("result is saved to result.txt");
 			written = true;
-
-			for (size_t i = 1; i < grid.getHeight() - 1; i++)
-				std::println("{:.2f}", (grid[i][1].T - grid[i][2].T) / dx);
 		}
 
 		// Визуализация решения
@@ -306,7 +290,7 @@ int main()
 						case sf::Keyboard::R:
 						{
 							time = 0;
-							for (auto& node: grid | internal)
+							for (auto& node: grid)
 								node.T = 0;
 
 							break;
@@ -339,40 +323,11 @@ int main()
 		 	sf::Vector2f(colormap_width, grid_display_size.y)
 		);
 
+		DrawHoveredNode(window, grid);
+
 		text.setString(std::format("t = {:.2f}", time));
 		text.setPosition(gap, gap + grid_display_size.y + 10);
 		window.draw(text);
-
-		auto mouse = sf::Mouse::getPosition(window);
-		int i = ((mouse.y - gap) / (render_scale * dy));
-		int j = ((mouse.x - gap) / (render_scale * dx));
-
-		if (
-			i >= 0 && i < grid.getHeight() &&
-			j >= 0 && j < grid.getWidth()
-		)
-		{
-			auto& node = grid[i][j];
-
-			rect.setPosition(sf::Vector2f(gap + node.x * render_scale, gap + node.y * render_scale));
-			rect.setSize(sf::Vector2f(dx * render_scale, dy * render_scale));
-			rect.setOutlineColor(sf::Color::White);
-			rect.setFillColor(sf::Color::Transparent);
-			rect.setOutlineThickness(1);
-			window.draw(rect);
-
-			text.setString(std::format("T = {:.2f}", node.T));
-			text.setPosition(mouse.x + 20, mouse.y);
-			
-			auto bounds = text.getGlobalBounds();
-			rect.setSize(bounds.getSize() + sf::Vector2f(10, 10));
-			rect.setPosition(bounds.getPosition() - sf::Vector2f(5, 5));
-			rect.setFillColor(sf::Color(0, 0, 0, 200));
-			rect.setOutlineThickness(0);
-
-			window.draw(rect);
-			window.draw(text);
-		}
 
 		window.display();
 	}
@@ -441,12 +396,12 @@ void DrawGrid(
 
 	if (vectors)
 	{
-		for (size_t i = 2; i < grid.getHeight() - 1; i += 2)
+		for (size_t i = 0; i < grid.getHeight(); i++)
 		{
-			for (size_t j = 2; j < grid.getWidth() - 1; j += 2)
+			for (size_t j = 0; j < grid.getWidth(); j++)
 			{
 				const auto& node = grid[i][j];
-				if (node.type != Node::Type::Internal)
+				if (node.type != Node::Type::Internal || node.bc != Node::BoundaryCondition::None)
 					continue;
 
 				auto dt_dx = (grid[i][j - 1].T - grid[i][j + 1].T) / (2 * dx);
@@ -485,11 +440,12 @@ void DrawGrid(
 			switch (node.type)
 			{
 				case Node::Type::Internal:
-					rect.setFillColor(Approximate(colors, (node.T - T_min) / (T_max - T_min)));
-					break;
+					if (node.bc == Node::BoundaryCondition::None)
+						rect.setFillColor(Approximate(colors, (node.T - T_min) / (T_max - T_min)));
 
-				case Node::Type::Boundary:
-					rect.setFillColor(sf::Color::White);
+					else
+						rect.setFillColor(sf::Color::White);
+
 					break;
 
 				case Node::Type::External:
@@ -508,6 +464,50 @@ void DrawGrid(
 	rect.setOutlineColor(sf::Color::White);
 	rect.setFillColor(sf::Color::Transparent);
 	target.draw(rect);
+}
+
+void DrawHoveredNode(
+	sf::RenderWindow& window,
+	const Matrix<Node>& grid
+)
+{
+	static sf::RectangleShape rect;
+
+	static sf::Text text;
+	text.setFillColor(sf::Color::White);
+	text.setCharacterSize(20);
+	text.setFont(font);
+
+	auto mouse = sf::Mouse::getPosition(window);
+	int i = ((mouse.y - gap) / (render_scale * dy));
+	int j = ((mouse.x - gap) / (render_scale * dx));
+
+	if (
+		i >= 0 && i < grid.getHeight() &&
+		j >= 0 && j < grid.getWidth()
+	)
+	{
+		auto& node = grid[i][j];
+
+		rect.setPosition(sf::Vector2f(gap + node.x * render_scale, gap + node.y * render_scale));
+		rect.setSize(sf::Vector2f(dx * render_scale, dy * render_scale));
+		rect.setOutlineColor(sf::Color::White);
+		rect.setFillColor(sf::Color::Transparent);
+		rect.setOutlineThickness(1);
+		window.draw(rect);
+
+		text.setString(std::format("T = {:.2f} ({})", node.T, std::to_underlying(node.bc)));
+		text.setPosition(mouse.x + 20, mouse.y);
+			
+		auto bounds = text.getGlobalBounds();
+		rect.setSize(bounds.getSize() + sf::Vector2f(10, 10));
+		rect.setPosition(bounds.getPosition() - sf::Vector2f(5, 5));
+		rect.setFillColor(sf::Color(0, 0, 0, 200));
+		rect.setOutlineThickness(0);
+
+		window.draw(rect);
+		window.draw(text);
+	}
 }
 
 void DrawColormap(
