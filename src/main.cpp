@@ -137,7 +137,7 @@ int main()
 			else if (j == 0)
 			{
 				node.bc = Node::BoundaryCondition::Neumann;
-				node.bc_value = -40;
+				node.bc_value = 40;
 			}
 
 			// Правые наклонные граничные узлы
@@ -223,10 +223,11 @@ int main()
 						case Node::BoundaryCondition::Neumann:
 							// dT/dn = q =>
 							// dT/dx = q =>
-							// T_(i,j+1) - T_(i,j) = q*dx
+							// T_(i,j+1) - T_(i,j) = 0
+							// T_(i,j) - T_(i,j-1) = 0
 							A[node.id][node.id] = -1;
 							A[node.id][grid[i][j + 1].id] = 1;
-							B[node.id][0] = node.bc_value * dx;
+							B[node.id][0] = -node.bc_value * dx;
 
 							break;
 
@@ -440,11 +441,11 @@ void DrawGrid(
 			switch (node.type)
 			{
 				case Node::Type::Internal:
-					if (node.bc == Node::BoundaryCondition::None)
-						rect.setFillColor(Approximate(colors, (node.T - T_min) / (T_max - T_min)));
+					if (node.bc != Node::BoundaryCondition::None)
+						rect.setFillColor(sf::Color::White);
 
 					else
-						rect.setFillColor(sf::Color::White);
+						rect.setFillColor(Approximate(colors, (node.T - T_min) / (T_max - T_min)));
 
 					break;
 
